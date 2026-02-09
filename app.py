@@ -1,25 +1,22 @@
 from flask import Flask, render_template, request, redirect, session
-import os
-import json
+import os, json
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# ✅ 1. CREATE FLASK APP FIRST
+# ---------------- APP INIT ----------------
 app = Flask(__name__)
 app.secret_key = "student_records_secret"
 
-# ✅ 2. FIREBASE INIT (ONLY ONCE)
+# ---------------- FIREBASE INIT ----------------
 firebase_key = os.environ.get("FIREBASE_KEY")
 
 cred = credentials.Certificate(json.loads(firebase_key))
-
 if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
 
-# ✅ 3. ROUTES (AFTER app IS DEFINED)
-
+# ---------------- LOGIN ----------------
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -29,25 +26,30 @@ def login():
         return render_template("login.html", error="Invalid credentials")
     return render_template("login.html")
 
-
+# ---------------- DASHBOARD (SAFE) ----------------
 @app.route("/dashboard")
 def dashboard():
     if "user" not in session:
         return redirect("/")
 
-    docs = db.collection("students") \
-             .order_by("percentage", direction=firestore.Query.DESCENDING) \
-             .stream()
-
     students = []
     names = []
     percentages = []
 
+    docs = db.collection("students").stream()
+
     for d in docs:
         data = d.to_dict()
+
+        if "percentage" not in data:
+            continue
+
         students.append(data)
-        names.append(data["name"])
-        percentages.append(data["percentage"])
+        names.append(data.get("name", "Unknown"))
+        percentages.append(data.get("percentage", 0))
+
+    # Sort safely in Python
+    students.sort(key=lambda x: x["percentage"], reverse=True)
 
     return render_template(
         "index.html",
@@ -56,7 +58,7 @@ def dashboard():
         percentages=percentages
     )
 
-
+# ---------------- ADD STUDENT ----------------
 @app.route("/add", methods=["GET", "POST"])
 def add():
     if "user" not in session:
@@ -71,9 +73,9 @@ def add():
         i = 1
 
         while f"subject{i}" in request.form:
-            sub = request.form[f"subject{i}"]
+            subject = request.form[f"subject{i}"]
             marks = int(request.form[f"marks{i}"])
-            subjects.append({"name": sub, "marks": marks})
+            subjects.append({"name": subject, "marks": marks})
             total += marks
             i += 1
 
@@ -103,15 +105,13 @@ def add():
 
     return render_template("add.html")
 
-
+# ---------------- LOGOUT ----------------
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/")
 
-
-# ✅ 4. RUN APP (LAST)
+# ---------------- RUN ----------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
